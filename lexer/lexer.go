@@ -1,5 +1,7 @@
 package lexer
 
+import "fmt"
+
 type TokenKind int
 
 const (
@@ -54,4 +56,33 @@ type Token struct {
 	Column int
 	Start  int
 	End    int
+}
+
+type LexError struct {
+	Message string
+	Line    int
+	Column  int
+}
+
+func (e *LexError) Error() string {
+	return fmt.Sprintf("[line %d, col %d] %s", e.Line, e.Column, e.Message)
+}
+
+type Lexer struct {
+	source string
+	runes  []rune
+	index  int
+	line   int
+	column int
+	offset int
+}
+
+func New(input string) *Lexer {
+	return &Lexer{
+		source: input,
+		runes:  []rune(input),
+		line:   1,
+		column: 1,
+		offset: 0,
+	}
 }

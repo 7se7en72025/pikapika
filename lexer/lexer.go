@@ -195,3 +195,232 @@ func isIdentStart(r rune) bool {
 func isIdentPart(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
+
+func (l *Lexer) readIdent() Token {
+	line, column := l.line, l.column
+	start := l.offset
+	text := l.readWhile(isIdentPart)
+
+	if kind, ok := keywords[text]; ok {
+		return Token{Kind: kind, Value: text, Line: line, Column: column, Start: start, End: l.offset}
+	}
+
+	return Token{Kind: TokenIdent, Value: text, Line: line, Column: column, Start: start, End: l.offset}
+}
+
+func (l *Lexer) readComment() Token {
+	line, column := l.line, l.column
+	start := l.offset
+	l.advance()
+	text := l.readWhile(func(r rune) bool { return r != '\n' })
+	return Token{Kind: TokenComment, Value: text, Line: line, Column: column, Start: start, End: l.offset}
+}
+
+func (l *Lexer) readString() (Token, error) {
+	line, column := l.line, l.column
+	start := l.offset
+	l.advance()
+
+	var builder strings.Builder
+	for {
+		r := l.peek()
+		if r == 0 {
+			return Token{Kind: TokenIllegal, Value: builder.String(), Line: line, Column: column, Start: start, End: l.offset}, &LexError{Message: "unterminated string", Line: line, Column: column}
+		}
+		if r == '"' {
+			l.advance()
+			break
+		}
+		if r == '\\' {
+			l.advance()
+			switch l.peek() {
+			case 'n':
+				builder.WriteRune('\n')
+			case 't':
+				builder.WriteRune('\t')
+			case '"':
+				builder.WriteRune('"')
+			case '\\':
+				builder.WriteRune('\\')
+			default:
+				builder.WriteRune(l.peek())
+			}
+			if l.peek() != 0 {
+				l.advance()
+			}
+			continue
+		}
+		builder.WriteRune(l.advance())
+	}
+
+	return Token{Kind: TokenString, Value: builder.String(), Line: line, Column: column, Start: start, End: l.offset}, nil
+}
+
+func (l *Lexer) readWord() Token {
+	line, column := l.line, l.column
+	start := l.offset
+
+	if isIdentStart(l.peek()) {
+		return l.readIdent()
+	}
+
+	if unicode.IsDigit(l.peek()) {
+		if token, err := l.readNumber(); err == nil {
+			return token
+		}
+	}
+
+	text := l.readWhile(func(r rune) bool {
+		return !unicode.IsSpace(r) && !strings.ContainsRune("(){}[],:;.\"", r) && r != '#'
+	})
+
+	if text == "" {
+		r := l.advance()
+		return Token{Kind: TokenIllegal, Value: string(r), Line: line, Column: column, Start: start, End: l.offset}
+	}
+
+	return Token{Kind: TokenWord, Value: text, Line: line, Column: column, Start: start, End: l.offset}
+}
+
+func (l *Lexer) Next() (Token, error) {
+	l.skipWhitespace()
+	line, column := l.line, l.column
+	start := l.offset
+
+	switch current := l.peek(); current {
+	case 0:
+		return Token{Kind: TokenEOF, Line: line, Column: column, Start: start, End: start}, nil
+	case '#':
+		return l.readComment(), nil
+	case '"':
+		return l.readString()
+	case '+':
+		l.advance()
+		return Token{Kind: TokenPlus, Value: "+", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case '-':
+		l.advance()
+		return Token{Kind: TokenMinus, Value: "-", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case '*':
+		l.advance()
+		return Token{Kind: TokenStar, Value: "*", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case '/':
+		l.advance()
+		return Token{Kind: TokenSlash, Value: "/", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case '=':
+		l.advance()
+		if l.peek() == '=' {
+			l.advance()
+			return Token{Kind: TokenEq, Value: "==", Line: line, Column: column, Start: start, End: l.offset}, nil
+		}
+		if l.peek() == '>' {
+			l.advance()
+			return Token{Kind: TokenArrow, Value: "=>", Line: line, Column: column, Start: start, End: l.offset}, nil
+		}
+		return Token{Kind: TokenAssign, Value: "=", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case '!':
+		l.advance()
+		if l.peek() == '=' {
+			l.advance()
+			return Token{Kind: TokenNotEq, Value: "!=", Line: line, Column: column, Start: start, End: l.offset}, nil
+		}
+		return Token{Kind: TokenBang, Value: "!", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case '<':
+		l.advance()
+		if l.peek() == '=' {
+			l.advance()
+			return Token{Kind: TokenLtEq, Value: "<=", Line: line, Column: column, Start: start, End: l.offset}, nil
+		}
+		return Token{Kind: TokenLt, Value: "<", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case '>':
+		l.advance()
+		if l.peek() == '=' {
+			l.advance()
+			return Token{Kind: TokenGtEq, Value: ">=", Line: line, Column: column, Start: start, End: l.offset}, nil
+		}
+		return Token{Kind: TokenGt, Value: ">", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case '&':
+		l.advance()
+		if l.peek() == '&' {
+			l.advance()
+			return Token{Kind: TokenAmpAmp, Value: "&&", Line: line, Column: column, Start: start, End: l.offset}, nil
+		}
+		return Token{Kind: TokenIllegal, Value: "&", Line: line, Column: column, Start: start, End: l.offset}, &LexError{Message: "unexpected '&'", Line: line, Column: column}
+	case '|':
+		l.advance()
+		if l.peek() == '|' {
+			l.advance()
+			return Token{Kind: TokenPipePipe, Value: "||", Line: line, Column: column, Start: start, End: l.offset}, nil
+		}
+		if l.peek() == '>' {
+			l.advance()
+			return Token{Kind: TokenPipe, Value: "|>", Line: line, Column: column, Start: start, End: l.offset}, nil
+		}
+		return Token{Kind: TokenIllegal, Value: "|", Line: line, Column: column, Start: start, End: l.offset}, &LexError{Message: "unexpected '|'", Line: line, Column: column}
+	case '(':
+		l.advance()
+		return Token{Kind: TokenLParen, Value: "(", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case ')':
+		l.advance()
+		return Token{Kind: TokenRParen, Value: ")", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case '{':
+		l.advance()
+		return Token{Kind: TokenLBrace, Value: "{", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case '}':
+		l.advance()
+		return Token{Kind: TokenRBrace, Value: "}", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case '[':
+		l.advance()
+		return Token{Kind: TokenLBracket, Value: "[", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case ']':
+		l.advance()
+		return Token{Kind: TokenRBracket, Value: "]", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case ',':
+		l.advance()
+		return Token{Kind: TokenComma, Value: ",", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case ';':
+		l.advance()
+		return Token{Kind: TokenSemicolon, Value: ";", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case ':':
+		l.advance()
+		return Token{Kind: TokenColon, Value: ":", Line: line, Column: column, Start: start, End: l.offset}, nil
+	case '.':
+		l.advance()
+		if l.peek() == '.' {
+			l.advance()
+			if l.peek() == '.' {
+				l.advance()
+				return Token{Kind: TokenDotDotDot, Value: "...", Line: line, Column: column, Start: start, End: l.offset}, nil
+			}
+			return Token{Kind: TokenDotDot, Value: "..", Line: line, Column: column, Start: start, End: l.offset}, nil
+		}
+		return Token{Kind: TokenDot, Value: ".", Line: line, Column: column, Start: start, End: l.offset}, nil
+	default:
+		if unicode.IsLetter(current) || current == '_' {
+			return l.readIdent(), nil
+		}
+		if unicode.IsDigit(current) {
+			return l.readNumber()
+		}
+		ch := l.advance()
+		return Token{Kind: TokenIllegal, Value: string(ch), Line: line, Column: column, Start: start, End: l.offset}, &LexError{Message: fmt.Sprintf("unexpected character %q", ch), Line: line, Column: column}
+	}
+}
+
+func Lex(input string) ([]Token, error) {
+	le := New(input)
+	var tokens []Token
+
+	for {
+		token, err := le.Next()
+		if token.Kind == TokenEOF {
+			tokens = append(tokens, token)
+			return tokens, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if token.Kind != TokenComment {
+			tokens = append(tokens, token)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package lexer
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -135,4 +136,62 @@ func (l *Lexer) readWhile(pred func(rune) bool) string {
 		builder.WriteRune(l.advance())
 	}
 	return builder.String()
+}
+
+func (l *Lexer) readNumber() (Token, error) {
+	line, column := l.line, l.column
+	start := l.offset
+	text := l.readWhile(func(r rune) bool { return unicode.IsDigit(r) })
+
+	if l.peek() == '.' {
+		if l.peekN(1) == '.' {
+			value, err := strconv.ParseInt(text, 10, 64)
+			if err != nil {
+				return Token{Kind: TokenIllegal, Value: text, Line: line, Column: column, Start: start, End: l.offset}, &LexError{Message: "invalid integer literal", Line: line, Column: column}
+			}
+			return Token{Kind: TokenInt, Value: value, Line: line, Column: column, Start: start, End: l.offset}, nil
+		}
+
+		l.advance()
+		if !unicode.IsDigit(l.peek()) {
+			return Token{Kind: TokenIllegal, Value: ".", Line: line, Column: column, Start: start, End: l.offset}, &LexError{Message: "invalid float literal", Line: line, Column: column}
+		}
+		text += "."
+		text += l.readWhile(func(r rune) bool { return unicode.IsDigit(r) })
+		value, err := strconv.ParseFloat(text, 64)
+		if err != nil {
+			return Token{Kind: TokenIllegal, Value: text, Line: line, Column: column, Start: start, End: l.offset}, &LexError{Message: "invalid float literal", Line: line, Column: column}
+		}
+		return Token{Kind: TokenFloat, Value: value, Line: line, Column: column, Start: start, End: l.offset}, nil
+	}
+
+	value, err := strconv.ParseInt(text, 10, 64)
+	if err != nil {
+		return Token{Kind: TokenIllegal, Value: text, Line: line, Column: column, Start: start, End: l.offset}, &LexError{Message: "invalid integer literal", Line: line, Column: column}
+	}
+
+	return Token{Kind: TokenInt, Value: value, Line: line, Column: column, Start: start, End: l.offset}, nil
+}
+
+var keywords = map[string]TokenKind{
+	"if":     TokenKeyword,
+	"else":   TokenKeyword,
+	"for":    TokenKeyword,
+	"while":  TokenKeyword,
+	"return": TokenKeyword,
+	"fn":     TokenKeyword,
+	"true":   TokenBool,
+	"false":  TokenBool,
+	"null":   TokenNull,
+	"in":     TokenIn,
+	"is":     TokenIs,
+	"match":  TokenMatch,
+}
+
+func isIdentStart(r rune) bool {
+	return unicode.IsLetter(r) || r == '_'
+}
+
+func isIdentPart(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
